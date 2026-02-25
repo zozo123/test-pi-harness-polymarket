@@ -1,4 +1,4 @@
-//! Demo runner — validates APIs and shows real opportunities.
+//! Demo — shows market analysis signals (NOT trading recommendations).
 
 use polymarket_tui::api::gamma::GammaClient;
 use polymarket_tui::api::types::format_volume;
@@ -7,7 +7,10 @@ use polymarket_tui::analysis::engine;
 #[tokio::main]
 async fn main() {
     println!("╔══════════════════════════════════════════════════════════════════╗");
-    println!("║     POLYMARKET OPPORTUNITY EXPLORER — DEMO                       ║");
+    println!("║     POLYMARKET MARKET SCANNER — Research Tool                    ║");
+    println!("╠══════════════════════════════════════════════════════════════════╣");
+    println!("║  ⚠️  FOR RESEARCH ONLY — NOT TRADING ADVICE                      ║");
+    println!("║  Signals shown are informational. DYOR. You can lose money.      ║");
     println!("╚══════════════════════════════════════════════════════════════════╝\n");
 
     let gamma = GammaClient::new();
@@ -40,7 +43,7 @@ async fn main() {
 
     // ── Top Markets by Volume ───────────────────────────────────
     println!("═══════════════════════════════════════════════════════════════════");
-    println!("📊 TOP 10 MARKETS BY VOLUME");
+    println!("📊 TOP 10 MARKETS BY VOLUME (Most Liquid)");
     println!("═══════════════════════════════════════════════════════════════════\n");
 
     let mut sorted_markets = markets.clone();
@@ -49,122 +52,139 @@ async fn main() {
     for (i, m) in sorted_markets.iter().take(10).enumerate() {
         let q = m.short_question(55);
         let yes = m.yes_price();
-        let no = m.no_price();
         let vol = format_volume(m.volume_f64());
         println!(
-            "  {:2}. {:<57} YES: {:5.1}¢  NO: {:5.1}¢  Vol: {}",
+            "  {:2}. {:<57} YES: {:5.1}¢  Vol: {}",
             i + 1,
             q,
             yes * 100.0,
-            no * 100.0,
             vol
         );
     }
 
-    // ── Run Opportunity Analysis ────────────────────────────────
+    // ── Volume Anomalies ────────────────────────────────────────
     println!("\n═══════════════════════════════════════════════════════════════════");
-    println!("🎯 RUNNING OPPORTUNITY ANALYSIS...");
-    println!("═══════════════════════════════════════════════════════════════════\n");
+    println!("📈 VOLUME ANOMALIES (Unusual 24h activity vs 7d average)");
+    println!("═══════════════════════════════════════════════════════════════════");
+    println!("   May indicate news or information entering the market.\n");
 
-    let opportunities = engine::scan_all(&markets, &events);
-    println!("   Found {} total opportunities\n", opportunities.len());
-
-    // ── Event Arbitrage ─────────────────────────────────────────
-    let arb_opps: Vec<_> = opportunities
-        .iter()
-        .filter(|o| o.label() == "EVENT ARB")
-        .collect();
-
-    if !arb_opps.is_empty() {
-        println!("🎯 EVENT ARBITRAGE ({} found)", arb_opps.len());
-        println!("   Multi-outcome events where Σ YES ≠ 100%\n");
-        for opp in arb_opps.iter().take(5) {
-            let score_bar = "█".repeat((opp.score * 5.0) as usize);
-            let empty = "░".repeat(5 - (opp.score * 5.0) as usize);
-            println!("   [{}{} {:.0}%] {}", score_bar, empty, opp.score * 100.0, opp.title());
-            for line in opp.detail_lines() {
-                println!("      {}", line);
+    let vol_signals = engine::find_volume_anomalies(&markets);
+    
+    if vol_signals.is_empty() {
+        println!("   No significant volume anomalies detected.\n");
+    } else {
+        for signal in vol_signals.iter().take(5) {
+            if let engine::SignalKind::VolumeAnomaly {
+                question,
+                volume_24h,
+                daily_avg_7d,
+                spike_ratio,
+                ..
+            } = &signal.kind
+            {
+                let q = if question.len() > 60 {
+                    format!("{}…", &question[..59])
+                } else {
+                    question.clone()
+                };
+                println!("   📈 {}", q);
+                println!("      24h: ${:.0}  |  7d avg: ${:.0}  |  {:.1}x spike", 
+                    volume_24h, daily_avg_7d, spike_ratio);
+                println!();
             }
-            println!();
         }
     }
 
-    // ── Price Deviations ────────────────────────────────────────
-    let dev_opps: Vec<_> = opportunities
-        .iter()
-        .filter(|o| o.label() == "PRICE DEV")
+    // ── Multi-Outcome Events ────────────────────────────────────
+    println!("═══════════════════════════════════════════════════════════════════");
+    println!("🎯 MULTI-OUTCOME EVENTS (Pricing Analysis)");
+    println!("═══════════════════════════════════════════════════════════════════");
+    println!("   ⚠️  Sum ≠ 100% is NOT always arbitrage!");
+    println!("   'By date' markets are cumulative — sum < 100% is expected.\n");
+
+    let multi_signals = engine::analyze_multi_outcome_events(&events);
+    let interesting: Vec<_> = multi_signals.iter()
+        .filter(|s| s.relevance > 0.3)
+        .take(5)
         .collect();
 
-    if !dev_opps.is_empty() {
-        println!("📊 PRICE DEVIATIONS ({} found)", dev_opps.len());
-        println!("   Binary markets where YES + NO ≠ $1.00\n");
-        for opp in dev_opps.iter().take(5) {
-            let score_bar = "█".repeat((opp.score * 5.0) as usize);
-            let empty = "░".repeat(5 - (opp.score * 5.0) as usize);
-            println!("   [{}{} {:.0}%] {}", score_bar, empty, opp.score * 100.0, opp.title());
-            for line in opp.detail_lines() {
-                println!("      {}", line);
+    if interesting.is_empty() {
+        println!("   No significant pricing anomalies in exclusive-outcome events.\n");
+    } else {
+        for signal in interesting {
+            if let engine::SignalKind::MultiOutcomePricing {
+                event_title,
+                total_yes,
+                market_count,
+                is_mutually_exclusive,
+                note,
+                ..
+            } = &signal.kind
+            {
+                let title = if event_title.len() > 55 {
+                    format!("{}…", &event_title[..54])
+                } else {
+                    event_title.clone()
+                };
+                let exclusive_str = if *is_mutually_exclusive { "exclusive" } else { "cumulative" };
+                println!("   🎯 {} [{}]", title, exclusive_str);
+                println!("      Σ YES: {:.1}%  |  {} outcomes", total_yes * 100.0, market_count);
+                println!("      {}", note);
+                println!();
             }
-            println!();
         }
     }
 
-    // ── Volume Surges ───────────────────────────────────────────
-    let vol_opps: Vec<_> = opportunities
-        .iter()
-        .filter(|o| o.label() == "VOL SURGE")
-        .collect();
+    // ── Near Expiry ─────────────────────────────────────────────
+    println!("═══════════════════════════════════════════════════════════════════");
+    println!("⏰ EXPIRING SOON (High confidence pricing, ≤14 days)");
+    println!("═══════════════════════════════════════════════════════════════════");
+    println!("   Markets near resolution with >90% or <10% YES prices.\n");
 
-    if !vol_opps.is_empty() {
-        println!("📈 VOLUME SURGES ({} found)", vol_opps.len());
-        println!("   Abnormal 24h trading activity\n");
-        for opp in vol_opps.iter().take(5) {
-            let score_bar = "█".repeat((opp.score * 5.0) as usize);
-            let empty = "░".repeat(5 - (opp.score * 5.0) as usize);
-            println!("   [{}{} {:.0}%] {}", score_bar, empty, opp.score * 100.0, opp.title());
-            for line in opp.detail_lines() {
-                println!("      {}", line);
+    let expiry_signals = engine::find_high_confidence_expiring(&markets, 14);
+    
+    if expiry_signals.is_empty() {
+        println!("   No high-confidence markets expiring soon.\n");
+    } else {
+        for signal in expiry_signals.iter().take(5) {
+            if let engine::SignalKind::HighConfidenceNearExpiry {
+                question,
+                yes_price,
+                days_remaining,
+                ..
+            } = &signal.kind
+            {
+                let q = if question.len() > 55 {
+                    format!("{}…", &question[..54])
+                } else {
+                    question.clone()
+                };
+                let direction = if *yes_price > 0.5 { "YES likely" } else { "NO likely" };
+                println!("   ⏰ {}", q);
+                println!("      YES: {:.1}¢  |  {} days left  |  {}", 
+                    yes_price * 100.0, days_remaining, direction);
+                println!();
             }
-            println!();
-        }
-    }
-
-    // ── Near Resolution ─────────────────────────────────────────
-    let near_opps: Vec<_> = opportunities
-        .iter()
-        .filter(|o| o.label() == "NEAR RES")
-        .collect();
-
-    if !near_opps.is_empty() {
-        println!("⏰ NEAR RESOLUTION ({} found)", near_opps.len());
-        println!("   Markets expiring soon with extreme prices\n");
-        for opp in near_opps.iter().take(5) {
-            let score_bar = "█".repeat((opp.score * 5.0) as usize);
-            let empty = "░".repeat(5 - (opp.score * 5.0) as usize);
-            println!("   [{}{} {:.0}%] {}", score_bar, empty, opp.score * 100.0, opp.title());
-            for line in opp.detail_lines() {
-                println!("      {}", line);
-            }
-            println!();
         }
     }
 
     // ── Summary ─────────────────────────────────────────────────
+    let all_signals = engine::scan_all(&markets, &events);
+    
     println!("═══════════════════════════════════════════════════════════════════");
     println!("📋 SUMMARY");
     println!("═══════════════════════════════════════════════════════════════════");
-    println!("   Markets scanned:     {}", markets.len());
-    println!("   Events scanned:      {}", events.len());
-    println!("   Total opportunities: {}", opportunities.len());
-    println!("   ├─ Event Arbitrage:  {}", arb_opps.len());
-    println!("   ├─ Price Deviations: {}", dev_opps.len());
-    println!("   ├─ Volume Surges:    {}", vol_opps.len());
-    println!("   └─ Near Resolution:  {}", near_opps.len());
-
-    let high_score = opportunities.iter().filter(|o| o.score >= 0.5).count();
-    println!("\n   🔥 High-score opportunities (≥50%): {}", high_score);
+    println!("   Markets scanned:    {}", markets.len());
+    println!("   Events scanned:     {}", events.len());
+    println!("   Signals generated:  {}", all_signals.len());
+    
+    let high_relevance = all_signals.iter().filter(|s| s.relevance > 0.5).count();
+    println!("   High relevance:     {}", high_relevance);
 
     println!("\n═══════════════════════════════════════════════════════════════════");
-    println!("✅ Demo complete! Run 'cargo run --release' for the full TUI.");
+    println!("⚠️  REMINDER: This is research data, not trading advice.");
+    println!("   • Fees, slippage, and liquidity affect real trades");
+    println!("   • Markets can resolve unexpectedly");
+    println!("   • Always verify data independently");
     println!("═══════════════════════════════════════════════════════════════════\n");
 }

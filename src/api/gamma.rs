@@ -11,6 +11,12 @@ pub struct GammaClient {
     client: Client,
 }
 
+impl Default for GammaClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GammaClient {
     pub fn new() -> Self {
         Self {

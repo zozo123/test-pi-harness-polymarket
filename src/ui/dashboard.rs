@@ -79,7 +79,7 @@ fn draw_stats(frame: &mut Frame, app: &App, area: Rect) {
     let high_score_opps = app
         .opportunities
         .iter()
-        .filter(|o| o.score >= 0.5)
+        .filter(|o| o.relevance >= 0.5)
         .count();
 
     let stats_text = vec![

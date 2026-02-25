@@ -1,161 +1,181 @@
-//! Opportunity analysis engine.
+//! Market analysis engine.
 //!
-//! Scans markets and events for exploitable patterns:
-//! - Event arbitrage (multi-outcome probability sums ≠ 100%)
-//! - Price deviation (YES + NO ≠ $1.00)
-//! - Wide spreads (market-making opportunities)
-//! - Volume anomalies (sudden spikes)
-//! - Near-resolution easy value
+//! Provides signals for research — NOT trading recommendations.
+//! These are informational tools, not guaranteed opportunities.
 
 use crate::api::types::{Event, Market, OrderBook};
 
-// ── Opportunity types ───────────────────────────────────────
+// ── Signal types ────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
-pub enum OpportunityKind {
-    /// Multi-outcome event where YES prices sum ≠ 1.0.
-    /// If > 1.0: sell all YES = guaranteed profit.
-    /// If < 1.0: buy all YES = guaranteed profit.
-    EventArbitrage {
+pub enum SignalKind {
+    /// Multi-outcome event pricing summary.
+    /// NOTE: Sum ≠ 100% does NOT always mean arbitrage!
+    /// - "By date X" markets are cumulative, not exclusive
+    /// - True arb only exists for mutually exclusive outcomes
+    MultiOutcomePricing {
         event_title: String,
         event_id: String,
         total_yes: f64,
         market_count: usize,
-        edge_pct: f64,
+        is_mutually_exclusive: bool, // We try to detect this
+        note: String,
     },
 
-    /// Binary market where YES + NO ≠ $1.00.
-    PriceDeviation {
+    /// Unusual trading volume in last 24h.
+    /// May indicate new information entering the market.
+    VolumeAnomaly {
+        question: String,
+        market_id: String,
+        volume_24h: f64,
+        volume_7d: f64,
+        daily_avg_7d: f64,
+        spike_ratio: f64,
+    },
+
+    /// Market approaching resolution with high confidence pricing.
+    /// High YES (>90%) or low YES (<10%) near expiry.
+    HighConfidenceNearExpiry {
         question: String,
         market_id: String,
         yes_price: f64,
-        no_price: f64,
-        deviation: f64,
+        days_remaining: i64,
+        implied_probability: f64,
+    },
+
+    /// Large market by volume — indicates high interest/liquidity.
+    HighLiquidity {
+        question: String,
+        market_id: String,
+        volume: f64,
+        liquidity: f64,
     },
 
     /// Market with wide bid-ask spread.
+    /// Wide spreads mean higher trading costs.
     WideSpread {
         question: String,
         market_id: String,
         bid: f64,
         ask: f64,
-        spread: f64,
-        spread_pct: f64,
-    },
-
-    /// Volume spike — 24h volume is disproportionate to total volume.
-    VolumeSurge {
-        question: String,
-        market_id: String,
-        volume_24h: f64,
-        total_volume: f64,
-        surge_ratio: f64,
-    },
-
-    /// Market near expiry with extreme price — easy to collect.
-    NearResolution {
-        question: String,
-        market_id: String,
-        yes_price: f64,
-        end_date: String,
-        days_remaining: i64,
+        spread_cents: f64,
     },
 }
 
 #[derive(Debug, Clone)]
-pub struct Opportunity {
-    pub kind: OpportunityKind,
-    /// 0.0 to 1.0 — how good is this opportunity?
-    pub score: f64,
+pub struct Signal {
+    pub kind: SignalKind,
+    /// Relevance score 0.0-1.0 (NOT a profit indicator)
+    pub relevance: f64,
 }
 
-impl Opportunity {
+impl Signal {
     pub fn label(&self) -> &'static str {
         match &self.kind {
-            OpportunityKind::EventArbitrage { .. } => "EVENT ARB",
-            OpportunityKind::PriceDeviation { .. } => "PRICE DEV",
-            OpportunityKind::WideSpread { .. } => "SPREAD",
-            OpportunityKind::VolumeSurge { .. } => "VOL SURGE",
-            OpportunityKind::NearResolution { .. } => "NEAR RES",
+            SignalKind::MultiOutcomePricing { .. } => "MULTI-MKT",
+            SignalKind::VolumeAnomaly { .. } => "VOLUME",
+            SignalKind::HighConfidenceNearExpiry { .. } => "EXPIRING",
+            SignalKind::HighLiquidity { .. } => "LIQUID",
+            SignalKind::WideSpread { .. } => "SPREAD",
         }
     }
 
     pub fn title(&self) -> String {
         match &self.kind {
-            OpportunityKind::EventArbitrage { event_title, .. } => event_title.clone(),
-            OpportunityKind::PriceDeviation { question, .. } => question.clone(),
-            OpportunityKind::WideSpread { question, .. } => question.clone(),
-            OpportunityKind::VolumeSurge { question, .. } => question.clone(),
-            OpportunityKind::NearResolution { question, .. } => question.clone(),
+            SignalKind::MultiOutcomePricing { event_title, .. } => event_title.clone(),
+            SignalKind::VolumeAnomaly { question, .. } => question.clone(),
+            SignalKind::HighConfidenceNearExpiry { question, .. } => question.clone(),
+            SignalKind::HighLiquidity { question, .. } => question.clone(),
+            SignalKind::WideSpread { question, .. } => question.clone(),
         }
     }
 
     pub fn detail_lines(&self) -> Vec<String> {
         match &self.kind {
-            OpportunityKind::EventArbitrage {
+            SignalKind::MultiOutcomePricing {
                 total_yes,
                 market_count,
-                edge_pct,
+                is_mutually_exclusive,
+                note,
                 ..
-            } => vec![
-                format!("Σ YES prices: {:.1}%", total_yes * 100.0),
-                format!("Markets: {}", market_count),
-                format!("Edge: {:.2}%", edge_pct),
-                if *total_yes > 1.0 {
-                    "Strategy: SELL all YES positions".into()
+            } => {
+                let mut lines = vec![
+                    format!("Σ YES prices: {:.1}%", total_yes * 100.0),
+                    format!("Outcomes: {}", market_count),
+                ];
+                if *is_mutually_exclusive {
+                    let deviation = (total_yes - 1.0).abs() * 100.0;
+                    lines.push(format!("Deviation from 100%: {:.1}%", deviation));
+                    if *total_yes > 1.02 {
+                        lines.push("⚠️  Overpriced (fees may explain this)".into());
+                    } else if *total_yes < 0.98 {
+                        lines.push("⚠️  Underpriced (check liquidity)".into());
+                    }
                 } else {
-                    "Strategy: BUY all YES positions".into()
-                },
-            ],
-            OpportunityKind::PriceDeviation {
-                yes_price,
-                no_price,
-                deviation,
-                ..
-            } => vec![
-                format!("YES: {:.1}¢  NO: {:.1}¢", yes_price * 100.0, no_price * 100.0),
-                format!("Sum: {:.1}¢ (deviation: {:.2}¢)", (yes_price + no_price) * 100.0, deviation * 100.0),
-            ],
-            OpportunityKind::WideSpread {
-                bid,
-                ask,
-                spread,
-                spread_pct,
-                ..
-            } => vec![
-                format!("Bid: {:.1}¢  Ask: {:.1}¢", bid * 100.0, ask * 100.0),
-                format!("Spread: {:.2}¢ ({:.1}%)", spread * 100.0, spread_pct),
-                "Strategy: Post limit orders on both sides".into(),
-            ],
-            OpportunityKind::VolumeSurge {
+                    lines.push(format!("Note: {}", note));
+                }
+                lines
+            }
+            SignalKind::VolumeAnomaly {
                 volume_24h,
-                total_volume,
-                surge_ratio,
+                daily_avg_7d,
+                spike_ratio,
                 ..
             } => vec![
-                format!("24h Vol: ${:.0}  Total: ${:.0}", volume_24h, total_volume),
-                format!("Surge ratio: {:.1}x daily average", surge_ratio),
+                format!("24h volume: ${:.0}", volume_24h),
+                format!("7d daily avg: ${:.0}", daily_avg_7d),
+                format!("Spike: {:.1}x normal", spike_ratio),
+                "May indicate news/information event".into(),
             ],
-            OpportunityKind::NearResolution {
+            SignalKind::HighConfidenceNearExpiry {
                 yes_price,
                 days_remaining,
-                end_date,
+                implied_probability,
                 ..
             } => vec![
                 format!("YES price: {:.1}¢", yes_price * 100.0),
-                format!("Days remaining: {}", days_remaining),
-                format!("End date: {}", end_date),
+                format!("Implied prob: {:.1}%", implied_probability * 100.0),
+                format!("Days to expiry: {}", days_remaining),
+                "⚠️  Low prices = market expects NO".into(),
+            ],
+            SignalKind::HighLiquidity {
+                volume, liquidity, ..
+            } => vec![
+                format!("Total volume: ${:.0}", volume),
+                format!("Liquidity: ${:.0}", liquidity),
+                "Higher liquidity = easier to trade".into(),
+            ],
+            SignalKind::WideSpread {
+                bid,
+                ask,
+                spread_cents,
+                ..
+            } => vec![
+                format!("Best bid: {:.1}¢", bid * 100.0),
+                format!("Best ask: {:.1}¢", ask * 100.0),
+                format!("Spread: {:.1}¢", spread_cents),
+                "Wide spread = higher trading cost".into(),
             ],
         }
     }
 }
 
+// Backward compatibility aliases
+pub type OpportunityKind = SignalKind;
+pub type Opportunity = Signal;
+
+impl Signal {
+    pub fn score(&self) -> f64 {
+        self.relevance
+    }
+}
+
 // ── Analysis functions ──────────────────────────────────────
 
-/// Find event arbitrage — multi-outcome events where probabilities
-/// don't sum to 100%.
-pub fn find_event_arbitrage(events: &[Event], min_edge: f64) -> Vec<Opportunity> {
-    let mut opps = Vec::new();
+/// Analyze multi-outcome event pricing.
+/// Returns informational signals — NOT guaranteed arbitrage.
+pub fn analyze_multi_outcome_events(events: &[Event]) -> Vec<Signal> {
+    let mut signals = Vec::new();
 
     for event in events {
         let market_count = event.market_count();
@@ -168,95 +188,53 @@ pub fn find_event_arbitrage(events: &[Event], min_edge: f64) -> Vec<Opportunity>
             continue;
         }
 
-        let edge = (total_yes - 1.0).abs();
-        if edge >= min_edge {
-            let score = (edge * 10.0).min(1.0); // scale to 0..1
-            opps.push(Opportunity {
-                kind: OpportunityKind::EventArbitrage {
-                    event_title: event
-                        .title
-                        .clone()
-                        .unwrap_or_else(|| "Unknown".into()),
-                    event_id: event.id.clone().unwrap_or_default(),
-                    total_yes,
-                    market_count,
-                    edge_pct: edge * 100.0,
-                },
-                score,
-            });
-        }
+        // Try to detect if outcomes are mutually exclusive
+        let title = event.title.as_deref().unwrap_or("");
+        let is_cumulative = title.contains("by") 
+            || title.contains("before")
+            || title.contains("By")
+            || title.contains("Before");
+        
+        let is_mutually_exclusive = !is_cumulative && market_count >= 2;
+
+        let note = if is_cumulative {
+            "Cumulative markets (by date) — sum < 100% is expected".into()
+        } else if total_yes > 1.05 {
+            "Sum > 100% may reflect fees or temporary mispricing".into()
+        } else if total_yes < 0.95 && is_mutually_exclusive {
+            "Sum < 100% on exclusive outcomes — verify market structure".into()
+        } else {
+            "Pricing appears reasonable".into()
+        };
+
+        // Only flag significant deviations on exclusive outcomes
+        let deviation = (total_yes - 1.0).abs();
+        let relevance = if is_mutually_exclusive && deviation > 0.02 {
+            (deviation * 5.0).min(1.0)
+        } else {
+            0.2 // Low relevance for cumulative or normal pricing
+        };
+
+        signals.push(Signal {
+            kind: SignalKind::MultiOutcomePricing {
+                event_title: event.title.clone().unwrap_or_else(|| "Unknown".into()),
+                event_id: event.id.clone().unwrap_or_default(),
+                total_yes,
+                market_count,
+                is_mutually_exclusive,
+                note,
+            },
+            relevance,
+        });
     }
 
-    opps.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
-    opps
+    signals.sort_by(|a, b| b.relevance.partial_cmp(&a.relevance).unwrap());
+    signals
 }
 
-/// Find binary markets where YES + NO ≠ $1.00.
-pub fn find_price_deviations(markets: &[Market], min_deviation: f64) -> Vec<Opportunity> {
-    let mut opps = Vec::new();
-
-    for market in markets {
-        if market.active != Some(true) || market.closed == Some(true) {
-            continue;
-        }
-
-        let prices = market.parsed_prices();
-        if prices.len() != 2 {
-            continue;
-        }
-
-        let deviation = market.price_deviation();
-        if deviation >= min_deviation {
-            let score = (deviation * 20.0).min(1.0);
-            opps.push(Opportunity {
-                kind: OpportunityKind::PriceDeviation {
-                    question: market.question.clone().unwrap_or_default(),
-                    market_id: market.id.clone().unwrap_or_default(),
-                    yes_price: prices[0],
-                    no_price: prices[1],
-                    deviation,
-                },
-                score,
-            });
-        }
-    }
-
-    opps.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
-    opps
-}
-
-/// Find markets with wide bid-ask spreads (from order book data).
-pub fn find_wide_spreads(
-    market_books: &[(Market, OrderBook)],
-    min_spread_pct: f64,
-) -> Vec<Opportunity> {
-    let mut opps = Vec::new();
-
-    for (market, book) in market_books {
-        let spread_pct = book.spread_pct();
-        if spread_pct >= min_spread_pct {
-            let score = (spread_pct / 50.0).min(1.0);
-            opps.push(Opportunity {
-                kind: OpportunityKind::WideSpread {
-                    question: market.question.clone().unwrap_or_default(),
-                    market_id: market.id.clone().unwrap_or_default(),
-                    bid: book.best_bid(),
-                    ask: book.best_ask(),
-                    spread: book.spread(),
-                    spread_pct,
-                },
-                score,
-            });
-        }
-    }
-
-    opps.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
-    opps
-}
-
-/// Find markets with disproportionate 24h volume.
-pub fn find_volume_surges(markets: &[Market], min_ratio: f64) -> Vec<Opportunity> {
-    let mut opps = Vec::new();
+/// Find markets with unusual 24h volume relative to 7d average.
+pub fn find_volume_anomalies(markets: &[Market]) -> Vec<Signal> {
+    let mut signals = Vec::new();
 
     for market in markets {
         if market.active != Some(true) || market.closed == Some(true) {
@@ -264,40 +242,44 @@ pub fn find_volume_surges(markets: &[Market], min_ratio: f64) -> Vec<Opportunity
         }
 
         let vol_24h = market.volume_24h_f64();
-        let total = market.volume_f64();
-
-        if total < 1000.0 || vol_24h < 100.0 {
+        let vol_7d = market.volume_1wk.unwrap_or(0.0);
+        
+        // Need meaningful volume
+        if vol_24h < 1000.0 || vol_7d < 1000.0 {
             continue;
         }
 
-        // Rough: if the market has been around, daily avg = total / ~365
-        // If 24h is way above that, it's a surge
-        let daily_avg = total / 180.0; // assume ~6 months average
-        if daily_avg > 0.0 {
-            let ratio = vol_24h / daily_avg;
-            if ratio >= min_ratio {
-                let score = (ratio / 20.0).min(1.0);
-                opps.push(Opportunity {
-                    kind: OpportunityKind::VolumeSurge {
-                        question: market.question.clone().unwrap_or_default(),
-                        market_id: market.id.clone().unwrap_or_default(),
-                        volume_24h: vol_24h,
-                        total_volume: total,
-                        surge_ratio: ratio,
-                    },
-                    score,
-                });
-            }
+        let daily_avg_7d = vol_7d / 7.0;
+        if daily_avg_7d < 100.0 {
+            continue;
+        }
+
+        let spike_ratio = vol_24h / daily_avg_7d;
+        
+        // Only flag if 24h is significantly above 7d daily average
+        if spike_ratio >= 2.0 {
+            let relevance = ((spike_ratio - 2.0) / 10.0).min(1.0);
+            signals.push(Signal {
+                kind: SignalKind::VolumeAnomaly {
+                    question: market.question.clone().unwrap_or_default(),
+                    market_id: market.id.clone().unwrap_or_default(),
+                    volume_24h: vol_24h,
+                    volume_7d: vol_7d,
+                    daily_avg_7d,
+                    spike_ratio,
+                },
+                relevance,
+            });
         }
     }
 
-    opps.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
-    opps
+    signals.sort_by(|a, b| b.relevance.partial_cmp(&a.relevance).unwrap());
+    signals
 }
 
-/// Find markets near resolution with extreme prices.
-pub fn find_near_resolution(markets: &[Market], max_days: i64) -> Vec<Opportunity> {
-    let mut opps = Vec::new();
+/// Find markets near expiry with high-confidence pricing.
+pub fn find_high_confidence_expiring(markets: &[Market], max_days: i64) -> Vec<Signal> {
+    let mut signals = Vec::new();
     let now = chrono::Utc::now();
 
     for market in markets {
@@ -310,46 +292,129 @@ pub fn find_near_resolution(markets: &[Market], max_days: i64) -> Vec<Opportunit
             None => continue,
         };
 
-        // Try parsing the end date
         let end_date = match chrono::DateTime::parse_from_rfc3339(end_str) {
             Ok(d) => d,
             Err(_) => continue,
         };
 
-        let days_remaining = (end_date.signed_duration_since(now)).num_days();
+        let days_remaining = end_date.signed_duration_since(now).num_days();
         if days_remaining < 0 || days_remaining > max_days {
             continue;
         }
 
         let yes = market.yes_price();
-        // Only interesting if price is extreme (confident resolution)
+        
+        // High confidence = price very high or very low
         if yes > 0.90 || yes < 0.10 {
-            let extremity = if yes > 0.90 { yes } else { 1.0 - yes };
-            let score = extremity * (1.0 - (days_remaining as f64 / max_days as f64));
-            opps.push(Opportunity {
-                kind: OpportunityKind::NearResolution {
+            let implied_prob = yes; // YES price ≈ implied probability
+            let confidence = if yes > 0.5 { yes } else { 1.0 - yes };
+            let time_factor = 1.0 - (days_remaining as f64 / max_days as f64);
+            let relevance = confidence * time_factor;
+
+            signals.push(Signal {
+                kind: SignalKind::HighConfidenceNearExpiry {
                     question: market.question.clone().unwrap_or_default(),
                     market_id: market.id.clone().unwrap_or_default(),
                     yes_price: yes,
-                    end_date: end_str.clone(),
                     days_remaining,
+                    implied_probability: implied_prob,
                 },
-                score: score.min(1.0),
+                relevance: relevance.min(1.0),
             });
         }
     }
 
-    opps.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
-    opps
+    signals.sort_by(|a, b| b.relevance.partial_cmp(&a.relevance).unwrap());
+    signals
 }
 
-/// Run all analyses that don't require order book data.
-pub fn scan_all(markets: &[Market], events: &[Event]) -> Vec<Opportunity> {
+/// Find highest volume/liquidity markets.
+pub fn find_high_liquidity_markets(markets: &[Market], top_n: usize) -> Vec<Signal> {
+    let mut active: Vec<_> = markets
+        .iter()
+        .filter(|m| m.active == Some(true) && m.closed != Some(true))
+        .collect();
+
+    active.sort_by(|a, b| b.volume_f64().partial_cmp(&a.volume_f64()).unwrap());
+
+    active
+        .into_iter()
+        .take(top_n)
+        .enumerate()
+        .map(|(i, m)| {
+            let relevance = 1.0 - (i as f64 / top_n as f64);
+            Signal {
+                kind: SignalKind::HighLiquidity {
+                    question: m.question.clone().unwrap_or_default(),
+                    market_id: m.id.clone().unwrap_or_default(),
+                    volume: m.volume_f64(),
+                    liquidity: m.liquidity_f64(),
+                },
+                relevance,
+            }
+        })
+        .collect()
+}
+
+/// Find markets with wide spreads (from order book data).
+pub fn find_wide_spreads(market_books: &[(Market, OrderBook)], min_spread_cents: f64) -> Vec<Signal> {
+    let mut signals = Vec::new();
+
+    for (market, book) in market_books {
+        let spread = book.spread();
+        let spread_cents = spread * 100.0;
+        
+        if spread_cents >= min_spread_cents {
+            let relevance = (spread_cents / 10.0).min(1.0);
+            signals.push(Signal {
+                kind: SignalKind::WideSpread {
+                    question: market.question.clone().unwrap_or_default(),
+                    market_id: market.id.clone().unwrap_or_default(),
+                    bid: book.best_bid(),
+                    ask: book.best_ask(),
+                    spread_cents,
+                },
+                relevance,
+            });
+        }
+    }
+
+    signals.sort_by(|a, b| b.relevance.partial_cmp(&a.relevance).unwrap());
+    signals
+}
+
+/// Run all analyses. Returns signals for research, not trading recommendations.
+pub fn scan_all(markets: &[Market], events: &[Event]) -> Vec<Signal> {
     let mut all = Vec::new();
-    all.extend(find_event_arbitrage(events, 0.02));
-    all.extend(find_price_deviations(markets, 0.01));
-    all.extend(find_volume_surges(markets, 3.0));
-    all.extend(find_near_resolution(markets, 14));
-    all.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+    
+    // Multi-outcome analysis (informational, NOT arbitrage)
+    all.extend(analyze_multi_outcome_events(events));
+    
+    // Volume anomalies
+    all.extend(find_volume_anomalies(markets));
+    
+    // Near-expiry high-confidence markets
+    all.extend(find_high_confidence_expiring(markets, 14));
+    
+    // Sort by relevance
+    all.sort_by(|a, b| b.relevance.partial_cmp(&a.relevance).unwrap());
     all
+}
+
+// Keep old function name for compatibility
+pub fn find_event_arbitrage(events: &[Event], _min_edge: f64) -> Vec<Signal> {
+    analyze_multi_outcome_events(events)
+}
+
+pub fn find_volume_surges(markets: &[Market], _min_ratio: f64) -> Vec<Signal> {
+    find_volume_anomalies(markets)
+}
+
+pub fn find_near_resolution(markets: &[Market], max_days: i64) -> Vec<Signal> {
+    find_high_confidence_expiring(markets, max_days)
+}
+
+pub fn find_price_deviations(_markets: &[Market], _min_deviation: f64) -> Vec<Signal> {
+    // Removed — binary YES+NO always sums to ~100% after fees
+    Vec::new()
 }

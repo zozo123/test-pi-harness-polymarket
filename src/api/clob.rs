@@ -11,6 +11,12 @@ pub struct ClobClient {
     client: Client,
 }
 
+impl Default for ClobClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ClobClient {
     pub fn new() -> Self {
         Self {

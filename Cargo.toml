@@ -14,10 +14,6 @@ path = "src/main.rs"
 name = "demo"
 path = "src/bin/demo.rs"
 
-[[bin]]
-name = "debug_api"
-path = "src/bin/debug_api.rs"
-
 [lib]
 name = "polymarket_tui"
 path = "src/lib.rs"
