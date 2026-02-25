@@ -1,32 +1,19 @@
 # polymarket-tui
 
-Terminal UI for researching [Polymarket](https://polymarket.com) prediction markets.
+Terminal tools for browsing [Polymarket](https://polymarket.com) prediction markets.
 
 ```
 ⚠️  FOR RESEARCH ONLY — NOT TRADING ADVICE
-    You can lose money. Fees, slippage, and liquidity affect real trades.
-    This tool does NOT execute trades. DYOR. Check your local laws.
+    You can lose money. DYOR. Check your local laws.
 ```
 
-## What It Shows
+## Tools
 
-| Signal | Description |
-|--------|-------------|
-| 📈 **Volume Anomaly** | Unusual 24h volume vs 7-day average — may indicate news |
-| 🎯 **Multi-Outcome** | Event pricing analysis (NOT arbitrage — see note below) |
-| ⏰ **Expiring** | Markets near resolution with confident pricing |
-| 💧 **Liquidity** | Highest volume markets for easier trading |
-
-### ⚠️ Important: "Arbitrage" Myth
-
-Many tools claim "arbitrage" when multi-outcome event prices don't sum to 100%. **This is often wrong:**
-
-- **"By date" markets are cumulative**, not mutually exclusive. If something happens in March, ALL "by March", "by June", etc. resolve YES.
-- **Sum < 100% is expected** for cumulative markets
-- **Sum > 100%** usually reflects trading fees, not free money
-- **True arbitrage is rare** and gets closed by bots in milliseconds
-
-This tool is honest about these limitations.
+| Binary | Purpose |
+|--------|---------|
+| `demo` | Browse markets by volume, activity, confidence |
+| `liquidity` | Check real spreads before trading |
+| `polymarket-tui` | Interactive TUI browser |
 
 ## Quick Start
 
@@ -34,95 +21,93 @@ This tool is honest about these limitations.
 git clone https://github.com/zozo123/test-pi-harness-polymarket.git
 cd test-pi-harness-polymarket
 cargo build --release
-./target/release/demo           # CLI demo
-./target/release/polymarket-tui # Full TUI
+
+./target/release/demo       # Market browser
+./target/release/liquidity  # Spread checker
+./target/release/polymarket-tui  # Interactive TUI
 ```
 
 ## Demo Output
 
 ```
-📡 Fetching active markets from Polymarket...
-   ✅ Loaded 200 markets
+╔══════════════════════════════════════════════════════════════════╗
+║     POLYMARKET BROWSER                                           ║
+╚══════════════════════════════════════════════════════════════════╝
 
-📈 VOLUME ANOMALIES (Unusual 24h activity vs 7d average)
-   May indicate news or information entering the market.
+💰 MOST ACTIVE (by total volume)
 
-   📈 Will bitcoin hit $1m before GTA VI?
-      24h: $176852  |  7d avg: $29498  |  6.0x spike
+   Will Chelsea Clinton win the 2028 Democratic pres… 
+   └─ YES:   0.9¢  │  Vol: $39.2M
 
-🎯 MULTI-OUTCOME EVENTS (Pricing Analysis)
-   ⚠️  Sum ≠ 100% is NOT always arbitrage!
+📈 HIGHEST 24H VOLUME (recent activity)
 
-   🎯 Taylor Swift pregnant in 2025? [exclusive]
-      Σ YES: 40.3%  |  3 outcomes
-      Sum < 100% on exclusive outcomes — verify market structure
+   Will the Indiana Pacers win the 2026 NBA Finals? 
+   └─ YES:   0.1¢  │  24h: $2.4M
 
-⏰ EXPIRING SOON (High confidence pricing, ≤14 days)
+⚖️  CLOSE RACES (YES price 40-60%)
 
-   ⏰ Will GTA 6 cost $100+?
-      YES: 0.4¢  |  3 days left  |  NO likely
+   Will bitcoin hit $1m before GTA VI? 
+   └─ YES:  48.7¢  │  Vol: $3.4M
 
-📋 SUMMARY
-   Markets scanned:    200
-   Events scanned:     100
-   Signals generated:  116
+📊 SUMMARY
+   Active markets:     200
+   Total volume:       $1.3B
+   Close races:        7
 ```
 
-## Keybindings
+## Liquidity Checker
 
-| Key | Action |
-|-----|--------|
-| `Tab` | Switch views |
-| `j/k` | Navigate |
-| `/` | Search |
-| `r` | Refresh |
-| `q` | Quit |
+**Actually useful** — shows real spreads from the CLOB API:
+
+```
+╔══════════════════════════════════════════════════════════════════╗
+║     LIQUIDITY CHECKER                                            ║
+╚══════════════════════════════════════════════════════════════════╝
+
+📊 SPREAD & LIQUIDITY (Top 10 by volume)
+
+   Will Trump deport 250,000-500,000 people? 
+   │  Midpoint:  92.5¢  │  Spread: 0.50¢ (0.5%)  │  🟢 Tight
+   └─ Volume: $7.5M  │  Liq: $8.5K
+
+   Will Jesus Christ return before GTA VI? 
+   │  Midpoint:  48.5¢  │  Spread: 1.00¢ (2.1%)  │  🟡 Okay
+   └─ Volume: $9.5M  │  Liq: $1.5M
+
+💡 WHAT SPREAD MEANS
+   🟢 Tight (<0.5¢)  = Low cost to trade
+   🟡 Okay  (0.5-2¢) = Moderate cost  
+   🔴 Wide  (>2¢)    = High cost
+```
+
+## What This Tool Does NOT Do
+
+- ❌ Find "free money" arbitrage (it doesn't exist for retail)
+- ❌ Compete with HFT bots
+- ❌ Execute trades
+- ❌ Guarantee profits
+
+## What This Tool DOES Do
+
+- ✅ Browse real market data
+- ✅ Show actual spreads (your trading cost)
+- ✅ Identify close races and high-confidence markets
+- ✅ Track volume and activity
 
 ## Architecture
 
 ```
 src/
-├── main.rs           # TUI
-├── app.rs            # State
-├── api/              # Polymarket API clients
-├── analysis/engine.rs # Signal detection (honest math)
-└── ui/               # Views
+├── main.rs              # TUI
+├── bin/
+│   ├── demo.rs          # Market browser
+│   └── liquidity.rs     # Spread checker  
+├── api/
+│   ├── gamma.rs         # Market data API
+│   └── clob.rs          # Order book API
+└── analysis/engine.rs   # Signal detection
 ```
-
-## Using as Library
-
-```rust
-use polymarket_tui::api::gamma::GammaClient;
-use polymarket_tui::analysis::engine;
-
-#[tokio::main]
-async fn main() {
-    let gamma = GammaClient::new();
-    let markets = gamma.list_markets(200, 0, Some(true), Some(false)).await.unwrap();
-    let events = gamma.list_events(100, Some(true), Some(false), None).await.unwrap();
-    
-    // Returns research signals, NOT trading recommendations
-    let signals = engine::scan_all(&markets, &events);
-    println!("Found {} signals", signals.len());
-}
-```
-
-## What This Tool Does NOT Do
-
-- ❌ Execute trades
-- ❌ Guarantee profits
-- ❌ Find "free money" arbitrage
-- ❌ Compete with HFT bots
-- ❌ Account for fees/slippage
-
-## What This Tool DOES Do
-
-- ✅ Fetch real market data
-- ✅ Show volume anomalies (potential news events)
-- ✅ Analyze multi-outcome pricing (with honest caveats)
-- ✅ Identify high-liquidity markets
-- ✅ Track expiring markets
 
 ## License
 
-MIT — See [LICENSE](LICENSE)
+MIT

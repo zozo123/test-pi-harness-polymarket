@@ -1,190 +1,125 @@
-//! Demo — shows market analysis signals (NOT trading recommendations).
+//! Polymarket Browser — Explore prediction markets.
 
 use polymarket_tui::api::gamma::GammaClient;
 use polymarket_tui::api::types::format_volume;
-use polymarket_tui::analysis::engine;
 
 #[tokio::main]
 async fn main() {
     println!("╔══════════════════════════════════════════════════════════════════╗");
-    println!("║     POLYMARKET MARKET SCANNER — Research Tool                    ║");
+    println!("║     POLYMARKET BROWSER                                           ║");
     println!("╠══════════════════════════════════════════════════════════════════╣");
-    println!("║  ⚠️  FOR RESEARCH ONLY — NOT TRADING ADVICE                      ║");
-    println!("║  Signals shown are informational. DYOR. You can lose money.      ║");
+    println!("║  Browse prediction markets. Not trading advice. DYOR.            ║");
     println!("╚══════════════════════════════════════════════════════════════════╝\n");
 
     let gamma = GammaClient::new();
 
-    // ── Fetch Markets ───────────────────────────────────────────
-    println!("📡 Fetching active markets from Polymarket...");
+    // Fetch data
+    println!("📡 Fetching markets...");
     let markets = match gamma.list_markets(200, 0, Some(true), Some(false)).await {
-        Ok(m) => {
-            println!("   ✅ Loaded {} markets\n", m.len());
-            m
-        }
+        Ok(m) => m,
         Err(e) => {
-            println!("   ❌ Failed: {}\n", e);
+            println!("❌ Failed: {}", e);
             return;
         }
     };
+    println!("   ✅ {} active markets\n", markets.len());
 
-    // ── Fetch Events ────────────────────────────────────────────
-    println!("📡 Fetching active events...");
-    let events = match gamma.list_events(100, Some(true), Some(false), None).await {
-        Ok(e) => {
-            println!("   ✅ Loaded {} events\n", e.len());
-            e
-        }
-        Err(e) => {
-            println!("   ❌ Failed: {}\n", e);
-            return;
-        }
-    };
+    // Sort by volume
+    let mut by_volume = markets.clone();
+    by_volume.sort_by(|a, b| b.volume_f64().partial_cmp(&a.volume_f64()).unwrap());
 
-    // ── Top Markets by Volume ───────────────────────────────────
+    // ── Most Active (by volume) ─────────────────────────────────
     println!("═══════════════════════════════════════════════════════════════════");
-    println!("📊 TOP 10 MARKETS BY VOLUME (Most Liquid)");
+    println!("💰 MOST ACTIVE (by total volume)");
     println!("═══════════════════════════════════════════════════════════════════\n");
 
-    let mut sorted_markets = markets.clone();
-    sorted_markets.sort_by(|a, b| b.volume_f64().partial_cmp(&a.volume_f64()).unwrap());
-
-    for (i, m) in sorted_markets.iter().take(10).enumerate() {
-        let q = m.short_question(55);
+    for m in by_volume.iter().take(10) {
+        let q = m.short_question(50);
         let yes = m.yes_price();
-        let vol = format_volume(m.volume_f64());
-        println!(
-            "  {:2}. {:<57} YES: {:5.1}¢  Vol: {}",
-            i + 1,
-            q,
-            yes * 100.0,
-            vol
-        );
+        println!("   {} ", q);
+        println!("   └─ YES: {:5.1}¢  │  Vol: {}\n", yes * 100.0, format_volume(m.volume_f64()));
     }
 
-    // ── Volume Anomalies ────────────────────────────────────────
-    println!("\n═══════════════════════════════════════════════════════════════════");
-    println!("📈 VOLUME ANOMALIES (Unusual 24h activity vs 7d average)");
+    // ── Biggest 24h Movers ──────────────────────────────────────
     println!("═══════════════════════════════════════════════════════════════════");
-    println!("   May indicate news or information entering the market.\n");
+    println!("📈 HIGHEST 24H VOLUME (recent activity)");
+    println!("═══════════════════════════════════════════════════════════════════\n");
 
-    let vol_signals = engine::find_volume_anomalies(&markets);
-    
-    if vol_signals.is_empty() {
-        println!("   No significant volume anomalies detected.\n");
-    } else {
-        for signal in vol_signals.iter().take(5) {
-            if let engine::SignalKind::VolumeAnomaly {
-                question,
-                volume_24h,
-                daily_avg_7d,
-                spike_ratio,
-                ..
-            } = &signal.kind
-            {
-                let q = if question.len() > 60 {
-                    format!("{}…", &question[..59])
-                } else {
-                    question.clone()
-                };
-                println!("   📈 {}", q);
-                println!("      24h: ${:.0}  |  7d avg: ${:.0}  |  {:.1}x spike", 
-                    volume_24h, daily_avg_7d, spike_ratio);
-                println!();
-            }
-        }
+    let mut by_24h: Vec<_> = markets.iter()
+        .filter(|m| m.volume_24h_f64() > 1000.0)
+        .collect();
+    by_24h.sort_by(|a, b| b.volume_24h_f64().partial_cmp(&a.volume_24h_f64()).unwrap());
+
+    for m in by_24h.iter().take(10) {
+        let q = m.short_question(50);
+        let yes = m.yes_price();
+        println!("   {} ", q);
+        println!("   └─ YES: {:5.1}¢  │  24h: {}\n", yes * 100.0, format_volume(m.volume_24h_f64()));
     }
 
-    // ── Multi-Outcome Events ────────────────────────────────────
+    // ── Close Races (YES near 50%) ──────────────────────────────
     println!("═══════════════════════════════════════════════════════════════════");
-    println!("🎯 MULTI-OUTCOME EVENTS (Pricing Analysis)");
-    println!("═══════════════════════════════════════════════════════════════════");
-    println!("   ⚠️  Sum ≠ 100% is NOT always arbitrage!");
-    println!("   'By date' markets are cumulative — sum < 100% is expected.\n");
+    println!("⚖️  CLOSE RACES (YES price 40-60%)");
+    println!("═══════════════════════════════════════════════════════════════════\n");
 
-    let multi_signals = engine::analyze_multi_outcome_events(&events);
-    let interesting: Vec<_> = multi_signals.iter()
-        .filter(|s| s.relevance > 0.3)
-        .take(5)
+    let close_races: Vec<_> = markets.iter()
+        .filter(|m| {
+            let yes = m.yes_price();
+            yes >= 0.40 && yes <= 0.60 && m.volume_f64() > 100_000.0
+        })
         .collect();
 
-    if interesting.is_empty() {
-        println!("   No significant pricing anomalies in exclusive-outcome events.\n");
+    if close_races.is_empty() {
+        println!("   No close races with >$100K volume found.\n");
     } else {
-        for signal in interesting {
-            if let engine::SignalKind::MultiOutcomePricing {
-                event_title,
-                total_yes,
-                market_count,
-                is_mutually_exclusive,
-                note,
-                ..
-            } = &signal.kind
-            {
-                let title = if event_title.len() > 55 {
-                    format!("{}…", &event_title[..54])
-                } else {
-                    event_title.clone()
-                };
-                let exclusive_str = if *is_mutually_exclusive { "exclusive" } else { "cumulative" };
-                println!("   🎯 {} [{}]", title, exclusive_str);
-                println!("      Σ YES: {:.1}%  |  {} outcomes", total_yes * 100.0, market_count);
-                println!("      {}", note);
-                println!();
-            }
+        for m in close_races.iter().take(10) {
+            let q = m.short_question(50);
+            let yes = m.yes_price();
+            println!("   {} ", q);
+            println!("   └─ YES: {:5.1}¢  │  Vol: {}\n", yes * 100.0, format_volume(m.volume_f64()));
         }
     }
 
-    // ── Near Expiry ─────────────────────────────────────────────
+    // ── High Confidence (YES >90% or <10%) ──────────────────────
     println!("═══════════════════════════════════════════════════════════════════");
-    println!("⏰ EXPIRING SOON (High confidence pricing, ≤14 days)");
-    println!("═══════════════════════════════════════════════════════════════════");
-    println!("   Markets near resolution with >90% or <10% YES prices.\n");
+    println!("🎯 HIGH CONFIDENCE (YES >90% or <10%, Vol >$500K)");
+    println!("═══════════════════════════════════════════════════════════════════\n");
 
-    let expiry_signals = engine::find_high_confidence_expiring(&markets, 14);
-    
-    if expiry_signals.is_empty() {
-        println!("   No high-confidence markets expiring soon.\n");
+    let high_conf: Vec<_> = markets.iter()
+        .filter(|m| {
+            let yes = m.yes_price();
+            (yes >= 0.90 || yes <= 0.10) && m.volume_f64() > 500_000.0
+        })
+        .collect();
+
+    if high_conf.is_empty() {
+        println!("   No high-confidence markets with >$500K volume found.\n");
     } else {
-        for signal in expiry_signals.iter().take(5) {
-            if let engine::SignalKind::HighConfidenceNearExpiry {
-                question,
-                yes_price,
-                days_remaining,
-                ..
-            } = &signal.kind
-            {
-                let q = if question.len() > 55 {
-                    format!("{}…", &question[..54])
-                } else {
-                    question.clone()
-                };
-                let direction = if *yes_price > 0.5 { "YES likely" } else { "NO likely" };
-                println!("   ⏰ {}", q);
-                println!("      YES: {:.1}¢  |  {} days left  |  {}", 
-                    yes_price * 100.0, days_remaining, direction);
-                println!();
-            }
+        for m in high_conf.iter().take(10) {
+            let q = m.short_question(50);
+            let yes = m.yes_price();
+            let direction = if yes > 0.5 { "YES likely" } else { "NO likely" };
+            println!("   {} ", q);
+            println!("   └─ YES: {:5.1}¢  │  {}  │  Vol: {}\n", 
+                yes * 100.0, direction, format_volume(m.volume_f64()));
         }
     }
 
     // ── Summary ─────────────────────────────────────────────────
-    let all_signals = engine::scan_all(&markets, &events);
-    
     println!("═══════════════════════════════════════════════════════════════════");
-    println!("📋 SUMMARY");
+    println!("📊 SUMMARY");
     println!("═══════════════════════════════════════════════════════════════════");
-    println!("   Markets scanned:    {}", markets.len());
-    println!("   Events scanned:     {}", events.len());
-    println!("   Signals generated:  {}", all_signals.len());
     
-    let high_relevance = all_signals.iter().filter(|s| s.relevance > 0.5).count();
-    println!("   High relevance:     {}", high_relevance);
+    let total_volume: f64 = markets.iter().map(|m| m.volume_f64()).sum();
+    let total_24h: f64 = markets.iter().map(|m| m.volume_24h_f64()).sum();
+    
+    println!("   Active markets:     {}", markets.len());
+    println!("   Total volume:       {}", format_volume(total_volume));
+    println!("   24h volume:         {}", format_volume(total_24h));
+    println!("   Close races:        {}", close_races.len());
+    println!("   High confidence:    {}", high_conf.len());
 
     println!("\n═══════════════════════════════════════════════════════════════════");
-    println!("⚠️  REMINDER: This is research data, not trading advice.");
-    println!("   • Fees, slippage, and liquidity affect real trades");
-    println!("   • Markets can resolve unexpectedly");
-    println!("   • Always verify data independently");
+    println!("   Run './target/release/polymarket-tui' for interactive browsing.");
     println!("═══════════════════════════════════════════════════════════════════\n");
 }
