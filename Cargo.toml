@@ -10,6 +10,14 @@ repository = "https://github.com/zozo123/test-pi-harness-polymarket"
 name = "polymarket-tui"
 path = "src/main.rs"
 
+[[bin]]
+name = "demo"
+path = "src/bin/demo.rs"
+
+[[bin]]
+name = "debug_api"
+path = "src/bin/debug_api.rs"
+
 [lib]
 name = "polymarket_tui"
 path = "src/lib.rs"

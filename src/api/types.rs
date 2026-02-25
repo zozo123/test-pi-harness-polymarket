@@ -1,9 +1,26 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+use serde_json::Value;
+
+// ── Helper: deserialize number-or-string as f64 ─────────────
+
+fn de_num_or_str<'de, D>(deserializer: D) -> Result<Option<f64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let v: Option<Value> = Option::deserialize(deserializer)?;
+    match v {
+        Some(Value::Number(n)) => Ok(n.as_f64()),
+        Some(Value::String(s)) => Ok(s.parse::<f64>().ok()),
+        _ => Ok(None),
+    }
+}
+
+
 
 // ── Market ──────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
 pub struct Market {
     pub id: Option<String>,
     pub question: Option<String>,
@@ -12,22 +29,27 @@ pub struct Market {
     pub description: Option<String>,
     pub end_date: Option<String>,
     pub category: Option<String>,
-    pub image: Option<String>,
     pub outcomes: Option<String>,
     pub outcome_prices: Option<String>,
-    pub volume: Option<String>,
-    pub volume_num: Option<String>,
-    pub liquidity: Option<String>,
-    pub liquidity_num: Option<String>,
+
+    #[serde(deserialize_with = "de_num_or_str", default)]
+    pub volume_num: Option<f64>,
+    #[serde(deserialize_with = "de_num_or_str", default)]
+    pub liquidity_num: Option<f64>,
+
     pub active: Option<bool>,
     pub closed: Option<bool>,
-    pub market_type: Option<String>,
-    pub volume24hr: Option<String>,
-    #[serde(alias = "volume1wk")]
-    pub volume_1wk: Option<String>,
+
+    #[serde(deserialize_with = "de_num_or_str", default)]
+    pub volume24hr: Option<f64>,
+    #[serde(alias = "volume1wk", deserialize_with = "de_num_or_str", default)]
+    pub volume_1wk: Option<f64>,
+
     pub clob_token_ids: Option<String>,
     pub accepting_orders: Option<bool>,
-    pub order_price_min_tick_size: Option<String>,
+
+    // Just capture events as raw values since we don't need all fields
+    #[serde(default)]
     pub events: Option<Vec<EventRef>>,
 }
 
@@ -76,26 +98,17 @@ impl Market {
 
     /// Volume as f64.
     pub fn volume_f64(&self) -> f64 {
-        self.volume_num
-            .as_deref()
-            .and_then(|v| v.parse::<f64>().ok())
-            .unwrap_or(0.0)
+        self.volume_num.unwrap_or(0.0)
     }
 
     /// Liquidity as f64.
     pub fn liquidity_f64(&self) -> f64 {
-        self.liquidity_num
-            .as_deref()
-            .and_then(|v| v.parse::<f64>().ok())
-            .unwrap_or(0.0)
+        self.liquidity_num.unwrap_or(0.0)
     }
 
     /// 24h volume as f64.
     pub fn volume_24h_f64(&self) -> f64 {
-        self.volume24hr
-            .as_deref()
-            .and_then(|v| v.parse::<f64>().ok())
-            .unwrap_or(0.0)
+        self.volume24hr.unwrap_or(0.0)
     }
 
     /// Short question (truncated).
@@ -111,31 +124,28 @@ impl Market {
 
 // ── Event ───────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
 pub struct Event {
     pub id: Option<String>,
     pub title: Option<String>,
     pub slug: Option<String>,
     pub description: Option<String>,
     pub end_date: Option<String>,
-    pub volume: Option<String>,
-    pub volume_num: Option<String>,
-    pub liquidity: Option<String>,
-    pub liquidity_num: Option<String>,
+
+    #[serde(deserialize_with = "de_num_or_str", default)]
+    pub volume_num: Option<f64>,
+    #[serde(deserialize_with = "de_num_or_str", default)]
+    pub liquidity_num: Option<f64>,
+
     pub active: Option<bool>,
     pub closed: Option<bool>,
     pub markets: Option<Vec<Market>>,
-    pub tags: Option<Vec<Tag>>,
-    pub created_at: Option<String>,
 }
 
 impl Event {
     pub fn volume_f64(&self) -> f64 {
-        self.volume_num
-            .as_deref()
-            .and_then(|v| v.parse::<f64>().ok())
-            .unwrap_or(0.0)
+        self.volume_num.unwrap_or(0.0)
     }
 
     /// For multi-market events: sum of all YES prices.
@@ -164,8 +174,8 @@ impl Event {
 
 // ── Event reference (embedded in Market) ────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
 pub struct EventRef {
     pub id: Option<String>,
     pub title: Option<String>,
@@ -174,18 +184,18 @@ pub struct EventRef {
 
 // ── Tag ─────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
 pub struct Tag {
     pub id: Option<String>,
     pub label: Option<String>,
     pub slug: Option<String>,
-    pub force_show: Option<bool>,
 }
 
 // ── Order Book ──────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
 pub struct OrderBook {
     pub market: Option<String>,
     pub asset_id: Option<String>,
@@ -256,7 +266,8 @@ impl OrderBook {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
 pub struct OrderLevel {
     pub price: Option<String>,
     pub size: Option<String>,
@@ -280,12 +291,14 @@ impl OrderLevel {
 
 // ── Price History ───────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
 pub struct PriceHistory {
     pub history: Option<Vec<PricePoint>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
 pub struct PricePoint {
     pub t: Option<i64>,   // unix timestamp
     pub p: Option<f64>,   // price
