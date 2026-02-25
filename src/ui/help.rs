@@ -1,14 +1,13 @@
 //! Help view — keybindings and usage info.
 
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::Modifier;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Tabs};
 use ratatui::Frame;
 
 use crate::app::{App, View};
 use super::theme;
-use ratatui::style::Style;
 
 pub fn draw(frame: &mut Frame, app: &App) {
     let size = frame.area();
@@ -16,8 +15,8 @@ pub fn draw(frame: &mut Frame, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3), // tabs
-            Constraint::Min(10),  // help content
+            Constraint::Length(3),
+            Constraint::Min(10),
         ])
         .split(size);
 
@@ -45,10 +44,7 @@ fn draw_tabs(frame: &mut Frame, app: &App, area: Rect) {
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(theme::border_style())
-                .title(Span::styled(
-                    " ◆ Polymarket Opportunity Explorer ",
-                    theme::title_style(),
-                )),
+                .title(Span::styled(" ◆ Polymarket Browser ", theme::title_style())),
         )
         .select(app.view.index());
 
@@ -64,34 +60,35 @@ fn draw_help_content(frame: &mut Frame, area: Rect) {
         ("  1-5", "Jump to view directly"),
         ("  j / ↓", "Move cursor down"),
         ("  k / ↑", "Move cursor up"),
-        ("  Ctrl+d / PgDn", "Page down (10 items)"),
-        ("  Ctrl+u / PgUp", "Page up (10 items)"),
-        ("  g", "Jump to top"),
-        ("  Enter", "Toggle detail view"),
+        ("  Ctrl+d / PgDn", "Page down"),
+        ("  Ctrl+u / PgUp", "Page up"),
+        ("  g / Home", "Jump to top"),
         ("", ""),
-        ("  DATA", ""),
+        ("  ACTIONS", ""),
         ("  ─────────────────────────────────────────────", ""),
-        ("  r", "Refresh all data from Polymarket APIs"),
-        ("  /", "Start search (Markets view)"),
-        ("  Esc", "Clear search / exit detail"),
+        ("  r", "Refresh market data"),
+        ("  s", "Refresh spreads (on Spreads view)"),
+        ("  /", "Search markets"),
+        ("  Esc", "Clear search"),
+        ("  q / Ctrl+c", "Quit"),
         ("", ""),
         ("  VIEWS", ""),
         ("  ─────────────────────────────────────────────", ""),
-        ("  Dashboard", "Overview with stats & top markets by volume"),
-        ("  Markets", "Searchable list of all active markets"),
-        ("  Events", "Multi-market events with arbitrage detection"),
-        ("  Opportunities", "All detected opportunities ranked by score"),
-        ("  Help", "This screen"),
+        ("  1 Dashboard", "Stats and top markets by volume"),
+        ("  2 Markets", "Browse all markets, search, filter"),
+        ("  3 Events", "Multi-market events"),
+        ("  4 Spreads", "Real bid-ask spreads from CLOB"),
+        ("  5 Help", "This screen"),
         ("", ""),
-        ("  OPPORTUNITY TYPES", ""),
+        ("  USING WITH POLYMARKET CLI", ""),
         ("  ─────────────────────────────────────────────", ""),
-        ("  🎯 EVENT ARB", "Multi-outcome events where Σ YES ≠ 100%"),
-        ("  📊 PRICE DEV", "Binary markets where YES + NO ≠ $1.00"),
-        ("  📈 VOL SURGE", "Abnormal 24h volume spike"),
-        ("  ⏰ NEAR RES", "Near expiry with extreme prices"),
-        ("  💹 SPREAD", "Wide bid-ask spread (market-making opp)"),
+        ("  1. Find markets here", "Browse, search, check spreads"),
+        ("  2. Trade via CLI", "polymarket clob market-order ..."),
+        ("  ", ""),
+        ("  Install CLI:", "brew install polymarket"),
+        ("  Docs:", "github.com/Polymarket/polymarket-cli"),
         ("", ""),
-        ("  q / Ctrl+c", "Quit"),
+        ("  ⚠️  NOT TRADING ADVICE — DYOR", ""),
     ];
 
     let lines: Vec<Line> = sections
@@ -100,14 +97,15 @@ fn draw_help_content(frame: &mut Frame, area: Rect) {
             if desc.is_empty() {
                 Line::from(Span::styled(
                     *key,
-                    theme::accent_style().add_modifier(Modifier::BOLD),
+                    if key.contains("─") {
+                        theme::dim_style()
+                    } else {
+                        theme::accent_style().add_modifier(Modifier::BOLD)
+                    },
                 ))
             } else {
                 Line::from(vec![
-                    Span::styled(
-                        format!("{:<30}", key),
-                        theme::accent_style(),
-                    ),
+                    Span::styled(format!("{:<25}", key), theme::accent_style()),
                     Span::styled(*desc, Style::default().fg(theme::FG)),
                 ])
             }
@@ -117,10 +115,7 @@ fn draw_help_content(frame: &mut Frame, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(theme::border_style())
-        .title(Span::styled(
-            " Help & Keybindings ",
-            theme::title_style(),
-        ));
+        .title(Span::styled(" Help ", theme::title_style()));
 
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }

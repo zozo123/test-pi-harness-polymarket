@@ -1,10 +1,9 @@
 pub mod dashboard;
 pub mod markets;
 pub mod events;
-pub mod opportunities;
+pub mod spreads;
 pub mod help;
 pub mod theme;
-pub mod detail;
 
 use ratatui::Frame;
 use crate::app::{App, View};
@@ -15,7 +14,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         View::Dashboard => dashboard::draw(frame, app),
         View::Markets => markets::draw(frame, app),
         View::Events => events::draw(frame, app),
-        View::Opportunities => opportunities::draw(frame, app),
+        View::Spreads => spreads::draw(frame, app),
         View::Help => help::draw(frame, app),
     }
 }

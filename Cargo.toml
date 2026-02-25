@@ -2,21 +2,13 @@
 name = "polymarket-tui"
 version = "0.1.0"
 edition = "2021"
-description = "TUI for exploring Polymarket prediction market opportunities"
+description = "TUI for browsing Polymarket prediction markets"
 license = "MIT"
 repository = "https://github.com/zozo123/test-pi-harness-polymarket"
 
 [[bin]]
 name = "polymarket-tui"
 path = "src/main.rs"
-
-[[bin]]
-name = "demo"
-path = "src/bin/demo.rs"
-
-[[bin]]
-name = "liquidity"
-path = "src/bin/liquidity.rs"
 
 [lib]
 name = "polymarket_tui"

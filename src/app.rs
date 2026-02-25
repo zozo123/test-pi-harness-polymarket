@@ -1,7 +1,7 @@
 //! Application state — manages data, views, and user interaction.
 
-use crate::analysis::engine::{self, Opportunity};
 use crate::api::gamma::GammaClient;
+use crate::api::clob::ClobClient;
 use crate::api::types::{Event, Market};
 
 // ── View enum ───────────────────────────────────────────────
@@ -11,7 +11,7 @@ pub enum View {
     Dashboard,
     Markets,
     Events,
-    Opportunities,
+    Spreads,
     Help,
 }
 
@@ -20,7 +20,7 @@ impl View {
         View::Dashboard,
         View::Markets,
         View::Events,
-        View::Opportunities,
+        View::Spreads,
         View::Help,
     ];
 
@@ -29,7 +29,7 @@ impl View {
             View::Dashboard => "Dashboard",
             View::Markets => "Markets",
             View::Events => "Events",
-            View::Opportunities => "Opportunities",
+            View::Spreads => "Spreads",
             View::Help => "Help",
         }
     }
@@ -39,7 +39,7 @@ impl View {
             View::Dashboard => 0,
             View::Markets => 1,
             View::Events => 2,
-            View::Opportunities => 3,
+            View::Spreads => 3,
             View::Help => 4,
         }
     }
@@ -54,23 +54,21 @@ pub struct App {
     // Data
     pub markets: Vec<Market>,
     pub events: Vec<Event>,
-    pub opportunities: Vec<Opportunity>,
+    pub spread_data: Vec<(Market, f64, f64)>, // (market, midpoint, spread)
 
     // UI state
     pub market_cursor: usize,
     pub event_cursor: usize,
-    pub opp_cursor: usize,
+    pub spread_cursor: usize,
     pub search_query: String,
     pub searching: bool,
     pub filtered_indices: Vec<usize>,
 
     // Loading state
     pub loading: bool,
+    pub loading_spreads: bool,
     pub status_msg: String,
     pub error_msg: Option<String>,
-
-    // Detail view
-    pub show_detail: bool,
 }
 
 impl Default for App {
@@ -86,23 +84,22 @@ impl App {
             running: true,
             markets: Vec::new(),
             events: Vec::new(),
-            opportunities: Vec::new(),
+            spread_data: Vec::new(),
             market_cursor: 0,
             event_cursor: 0,
-            opp_cursor: 0,
+            spread_cursor: 0,
             search_query: String::new(),
             searching: false,
             filtered_indices: Vec::new(),
             loading: false,
+            loading_spreads: false,
             status_msg: "Press 'r' to refresh data".into(),
             error_msg: None,
-            show_detail: false,
         }
     }
 
     pub fn set_view(&mut self, view: View) {
         self.view = view;
-        self.show_detail = false;
         self.searching = false;
     }
 
@@ -118,7 +115,6 @@ impl App {
         self.set_view(View::ALL[prev]);
     }
 
-    /// Move cursor down in current list.
     pub fn cursor_down(&mut self) {
         match self.view {
             View::Markets | View::Dashboard => {
@@ -133,17 +129,16 @@ impl App {
                     self.event_cursor = (self.event_cursor + 1).min(len - 1);
                 }
             }
-            View::Opportunities => {
-                let len = self.opportunities.len();
+            View::Spreads => {
+                let len = self.spread_data.len();
                 if len > 0 {
-                    self.opp_cursor = (self.opp_cursor + 1).min(len - 1);
+                    self.spread_cursor = (self.spread_cursor + 1).min(len - 1);
                 }
             }
             _ => {}
         }
     }
 
-    /// Move cursor up in current list.
     pub fn cursor_up(&mut self) {
         match self.view {
             View::Markets | View::Dashboard => {
@@ -152,8 +147,8 @@ impl App {
             View::Events => {
                 self.event_cursor = self.event_cursor.saturating_sub(1);
             }
-            View::Opportunities => {
-                self.opp_cursor = self.opp_cursor.saturating_sub(1);
+            View::Spreads => {
+                self.spread_cursor = self.spread_cursor.saturating_sub(1);
             }
             _ => {}
         }
@@ -175,12 +170,11 @@ impl App {
         match self.view {
             View::Markets | View::Dashboard => self.market_cursor = 0,
             View::Events => self.event_cursor = 0,
-            View::Opportunities => self.opp_cursor = 0,
+            View::Spreads => self.spread_cursor = 0,
             _ => {}
         }
     }
 
-    /// Build search filter indices.
     pub fn apply_search(&mut self) {
         if self.search_query.is_empty() {
             self.filtered_indices.clear();
@@ -202,7 +196,6 @@ impl App {
         self.market_cursor = 0;
     }
 
-    /// Get visible markets (filtered or all).
     pub fn visible_markets(&self) -> Vec<&Market> {
         if !self.search_query.is_empty() && !self.filtered_indices.is_empty() {
             self.filtered_indices
@@ -220,7 +213,6 @@ impl App {
         self.visible_markets().len()
     }
 
-    /// Get currently selected market.
     pub fn selected_market(&self) -> Option<&Market> {
         let visible = self.visible_markets();
         visible.get(self.market_cursor).copied()
@@ -261,20 +253,44 @@ impl App {
             }
         }
 
-        // Run analysis
-        self.status_msg = "Analyzing opportunities…".into();
-        self.opportunities = engine::scan_all(&self.markets, &self.events);
-        self.status_msg = format!(
-            "Ready — {} markets, {} events, {} opportunities found",
-            self.markets.len(),
-            self.events.len(),
-            self.opportunities.len(),
-        );
-
         // Sort markets by volume descending
         self.markets
             .sort_by(|a, b| b.volume_f64().partial_cmp(&a.volume_f64()).unwrap());
 
+        self.status_msg = format!(
+            "Ready — {} markets, {} events",
+            self.markets.len(),
+            self.events.len(),
+        );
+
         self.loading = false;
+    }
+
+    /// Fetch spread data for top markets.
+    pub async fn refresh_spreads(&mut self) {
+        self.loading_spreads = true;
+        self.spread_data.clear();
+
+        let clob = ClobClient::new();
+        
+        // Get top 20 markets by volume
+        let top_markets: Vec<_> = self.markets.iter().take(20).cloned().collect();
+        
+        for market in top_markets {
+            let token_ids = market.parsed_token_ids();
+            if token_ids.is_empty() {
+                continue;
+            }
+
+            let token = &token_ids[0];
+            let midpoint = clob.get_midpoint(token).await.unwrap_or(0.0);
+            let spread = clob.get_spread(token).await.unwrap_or(0.0);
+            
+            if midpoint > 0.0 {
+                self.spread_data.push((market, midpoint, spread));
+            }
+        }
+
+        self.loading_spreads = false;
     }
 }

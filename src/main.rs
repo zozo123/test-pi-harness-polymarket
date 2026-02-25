@@ -1,7 +1,4 @@
-//! Polymarket Opportunity Explorer — TUI
-//!
-//! Terminal-based dashboard for discovering trading opportunities
-//! on Polymarket prediction markets.
+//! Polymarket Browser — TUI for exploring prediction markets.
 
 use std::io;
 use std::time::Duration;
@@ -58,14 +55,13 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
             break;
         }
 
-        // Poll for events with timeout (allows future async updates)
         if event::poll(Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
                 if key.kind != KeyEventKind::Press {
                     continue;
                 }
 
-                // If searching, handle text input
+                // Search mode
                 if app.searching {
                     match key.code {
                         KeyCode::Esc => {
@@ -93,11 +89,9 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
                 // Global keybindings
                 match key.code {
                     // Quit
-                    KeyCode::Char('q') => {
-                        app.running = false;
-                    }
+                    KeyCode::Char('q') => app.running = false,
                     KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        app.running = false;
+                        app.running = false
                     }
 
                     // View switching
@@ -106,7 +100,7 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
                     KeyCode::Char('1') => app.set_view(View::Dashboard),
                     KeyCode::Char('2') => app.set_view(View::Markets),
                     KeyCode::Char('3') => app.set_view(View::Events),
-                    KeyCode::Char('4') => app.set_view(View::Opportunities),
+                    KeyCode::Char('4') => app.set_view(View::Spreads),
                     KeyCode::Char('5') => app.set_view(View::Help),
 
                     // Navigation
@@ -123,25 +117,18 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
                     KeyCode::Char('g') => app.cursor_top(),
                     KeyCode::Home => app.cursor_top(),
 
-                    // Detail toggle
-                    KeyCode::Enter => {
-                        app.show_detail = !app.show_detail;
-                    }
-                    KeyCode::Esc => {
-                        if app.show_detail {
-                            app.show_detail = false;
-                        } else if !app.search_query.is_empty() {
-                            app.search_query.clear();
-                            app.filtered_indices.clear();
-                            app.market_cursor = 0;
-                        }
-                    }
-
-                    // Search (only in markets view)
+                    // Search
                     KeyCode::Char('/') => {
                         if app.view == View::Markets || app.view == View::Dashboard {
                             app.searching = true;
                             app.search_query.clear();
+                        }
+                    }
+                    KeyCode::Esc => {
+                        if !app.search_query.is_empty() {
+                            app.search_query.clear();
+                            app.filtered_indices.clear();
+                            app.market_cursor = 0;
                         }
                     }
 
@@ -150,6 +137,15 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
                         app.loading = true;
                         terminal.draw(|frame| ui::draw(frame, &app))?;
                         app.refresh_data().await;
+                    }
+
+                    // Refresh spreads (on Spreads view)
+                    KeyCode::Char('s') => {
+                        if app.view == View::Spreads && !app.loading_spreads {
+                            app.loading_spreads = true;
+                            terminal.draw(|frame| ui::draw(frame, &app))?;
+                            app.refresh_spreads().await;
+                        }
                     }
 
                     _ => {}
