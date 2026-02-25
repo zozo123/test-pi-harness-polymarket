@@ -39,7 +39,7 @@ pub fn build_term_structure(markets: &[Market], stem: &str) -> Vec<TermPoint> {
     }
 
     // Sort by cumulative probability (proxy for date order)
-    points.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+    points.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
 
     let mut result = Vec::new();
     let mut prev_cum = 0.0;
@@ -167,7 +167,7 @@ pub fn find_close_races(markets: &[Market], min_volume: f64) -> Vec<CloseRace> {
         .filter(|r| r.distance_from_50 <= 0.15) // 35-65%
         .collect();
 
-    races.sort_by(|a, b| a.distance_from_50.partial_cmp(&b.distance_from_50).unwrap());
+    races.sort_by(|a, b| a.distance_from_50.partial_cmp(&b.distance_from_50).unwrap_or(std::cmp::Ordering::Equal));
     races
 }
 

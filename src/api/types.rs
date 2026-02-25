@@ -85,17 +85,6 @@ impl Market {
         self.parsed_prices().get(1).copied().unwrap_or(0.0)
     }
 
-    /// Price deviation from $1.00 — nonzero means potential arb.
-    pub fn price_deviation(&self) -> f64 {
-        let prices = self.parsed_prices();
-        if prices.len() >= 2 {
-            let sum: f64 = prices.iter().sum();
-            (sum - 1.0).abs()
-        } else {
-            0.0
-        }
-    }
-
     /// Volume as f64.
     pub fn volume_f64(&self) -> f64 {
         self.volume_num.unwrap_or(0.0)
@@ -111,13 +100,14 @@ impl Market {
         self.volume24hr.unwrap_or(0.0)
     }
 
-    /// Short question (truncated).
+    /// Short question (truncated, UTF-8 safe).
     pub fn short_question(&self, max_len: usize) -> String {
         let q = self.question.as_deref().unwrap_or("???");
-        if q.len() <= max_len {
+        if q.chars().count() <= max_len {
             q.to_string()
         } else {
-            format!("{}…", &q[..max_len - 1])
+            let truncated: String = q.chars().take(max_len.saturating_sub(1)).collect();
+            format!("{}…", truncated)
         }
     }
 }
@@ -155,16 +145,6 @@ impl Event {
             .as_ref()
             .map(|ms| ms.iter().map(|m| m.yes_price()).sum())
             .unwrap_or(0.0)
-    }
-
-    /// Arbitrage score: how far the sum deviates from 1.0.
-    pub fn arb_score(&self) -> f64 {
-        let total = self.total_yes_probability();
-        if total > 0.0 {
-            (total - 1.0).abs()
-        } else {
-            0.0
-        }
     }
 
     pub fn market_count(&self) -> usize {

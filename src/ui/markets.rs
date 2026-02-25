@@ -62,7 +62,7 @@ fn draw_tabs(frame: &mut Frame, app: &App, area: Rect) {
                 .borders(Borders::ALL)
                 .border_style(theme::border_style())
                 .title(Span::styled(
-                    " ◆ Polymarket Opportunity Explorer ",
+                    " ◆ Polymarket Browser ",
                     theme::title_style(),
                 )),
         )
@@ -188,7 +188,7 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
             theme::dim_style(),
         ),
         Span::styled(
-            "  /:search  Esc:clear  j/k:nav  Enter:detail  Tab:view  r:refresh  q:quit",
+            "  /:search  Esc:clear  j/k:nav  Tab:view  r:refresh  q:quit",
             theme::dim_style(),
         ),
     ]);

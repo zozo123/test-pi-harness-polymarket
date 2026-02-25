@@ -65,7 +65,7 @@ fn draw_stats(frame: &mut Frame, app: &App, area: Rect) {
     let close_races = app.markets.iter()
         .filter(|m| {
             let yes = m.yes_price();
-            yes >= 0.40 && yes <= 0.60 && m.volume_f64() > 100_000.0
+            (0.40..=0.60).contains(&yes) && m.volume_f64() > 100_000.0
         })
         .count();
 

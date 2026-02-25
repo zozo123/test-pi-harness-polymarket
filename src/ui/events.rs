@@ -1,4 +1,4 @@
-//! Events view — browse multi-market events, spot arbitrage.
+//! Events view — browse multi-market event groupings.
 
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
@@ -50,7 +50,7 @@ fn draw_tabs(frame: &mut Frame, app: &App, area: Rect) {
                 .borders(Borders::ALL)
                 .border_style(theme::border_style())
                 .title(Span::styled(
-                    " ◆ Polymarket Opportunity Explorer ",
+                    " ◆ Polymarket Browser ",
                     theme::title_style(),
                 )),
         )
@@ -64,7 +64,6 @@ fn draw_event_table(frame: &mut Frame, app: &App, area: Rect) {
         Cell::from("  Event").style(theme::header_style()),
         Cell::from("Markets").style(theme::header_style()),
         Cell::from("Σ YES").style(theme::header_style()),
-        Cell::from("Arb Edge").style(theme::header_style()),
         Cell::from("Volume").style(theme::header_style()),
         Cell::from("Status").style(theme::header_style()),
     ])
@@ -85,7 +84,6 @@ fn draw_event_table(frame: &mut Frame, app: &App, area: Rect) {
                 .collect::<String>();
             let mkt_count = e.market_count();
             let total_yes = e.total_yes_probability();
-            let arb = e.arb_score();
             let vol = format_volume(e.volume_f64());
 
             let status = if e.closed == Some(true) {
@@ -94,20 +92,6 @@ fn draw_event_table(frame: &mut Frame, app: &App, area: Rect) {
                 "Active"
             } else {
                 "—"
-            };
-
-            let arb_str = if arb > 0.01 && mkt_count >= 2 {
-                format!("{:.2}%", arb * 100.0)
-            } else {
-                "—".into()
-            };
-
-            let arb_style = if arb > 0.05 {
-                theme::green_style().add_modifier(Modifier::BOLD)
-            } else if arb > 0.02 {
-                theme::yellow_style()
-            } else {
-                theme::dim_style()
             };
 
             let yes_str = if mkt_count >= 2 {
@@ -132,7 +116,6 @@ fn draw_event_table(frame: &mut Frame, app: &App, area: Rect) {
                 Cell::from(format!("  {}", title)),
                 Cell::from(format!("{}", mkt_count)).style(theme::accent_style()),
                 Cell::from(yes_str).style(yes_style),
-                Cell::from(arb_str).style(arb_style),
                 Cell::from(vol),
                 Cell::from(status).style(if e.closed == Some(true) {
                     theme::red_style()
@@ -153,7 +136,6 @@ fn draw_event_table(frame: &mut Frame, app: &App, area: Rect) {
             Constraint::Min(35),
             Constraint::Length(9),
             Constraint::Length(8),
-            Constraint::Length(10),
             Constraint::Length(10),
             Constraint::Length(8),
         ],

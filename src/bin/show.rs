@@ -28,7 +28,7 @@ async fn main() {
     }
 
     let mut sorted = markets.clone();
-    sorted.sort_by(|a, b| b.volume_f64().partial_cmp(&a.volume_f64()).unwrap());
+    sorted.sort_by(|a, b| b.volume_f64().partial_cmp(&a.volume_f64()).unwrap_or(std::cmp::Ordering::Equal));
 
     let total_vol: f64 = markets.iter().map(|m| m.volume_f64()).sum();
     let total_24h: f64 = markets.iter().map(|m| m.volume_24h_f64()).sum();
@@ -68,7 +68,7 @@ async fn main() {
         .collect();
 
     let mut iran_sorted = iran.clone();
-    iran_sorted.sort_by(|a, b| b.volume_f64().partial_cmp(&a.volume_f64()).unwrap());
+    iran_sorted.sort_by(|a, b| b.volume_f64().partial_cmp(&a.volume_f64()).unwrap_or(std::cmp::Ordering::Equal));
 
     println!();
     println!("┌─ ◆ Polymarket Browser ───────────────────────────────────────────────┐");
@@ -96,7 +96,7 @@ async fn main() {
         .collect();
 
     let mut ukr_sorted = ukraine.clone();
-    ukr_sorted.sort_by(|a, b| b.volume_f64().partial_cmp(&a.volume_f64()).unwrap());
+    ukr_sorted.sort_by(|a, b| b.volume_f64().partial_cmp(&a.volume_f64()).unwrap_or(std::cmp::Ordering::Equal));
 
     println!();
     println!("┌─ ◆ Polymarket Browser ───────────────────────────────────────────────┐");

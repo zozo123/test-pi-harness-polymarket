@@ -238,11 +238,6 @@ impl App {
         self.visible_markets().len()
     }
 
-    pub fn selected_market(&self) -> Option<&Market> {
-        let visible = self.visible_markets();
-        visible.get(self.market_cursor).copied()
-    }
-
     /// Fetch data from Polymarket APIs.
     pub async fn refresh_data(&mut self) {
         self.loading = true;
@@ -280,7 +275,7 @@ impl App {
 
         // Sort markets by volume descending
         self.markets
-            .sort_by(|a, b| b.volume_f64().partial_cmp(&a.volume_f64()).unwrap());
+            .sort_by(|a, b| b.volume_f64().partial_cmp(&a.volume_f64()).unwrap_or(std::cmp::Ordering::Equal));
 
         self.status_msg = format!(
             "Ready — {} markets, {} events",
