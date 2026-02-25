@@ -101,7 +101,8 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
                     KeyCode::Char('2') => app.set_view(View::Markets),
                     KeyCode::Char('3') => app.set_view(View::Events),
                     KeyCode::Char('4') => app.set_view(View::Spreads),
-                    KeyCode::Char('5') => app.set_view(View::Help),
+                    KeyCode::Char('5') => app.set_view(View::Analysis),
+                    KeyCode::Char('6') => app.set_view(View::Help),
 
                     // Navigation
                     KeyCode::Char('j') | KeyCode::Down => app.cursor_down(),
@@ -145,6 +146,15 @@ async fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()
                             app.loading_spreads = true;
                             terminal.draw(|frame| ui::draw(frame, &app))?;
                             app.refresh_spreads().await;
+                        }
+                    }
+
+                    // Run analysis
+                    KeyCode::Char('a') => {
+                        if app.view == View::Analysis {
+                            app.status_msg = "Loading analysis…".into();
+                            terminal.draw(|frame| ui::draw(frame, &app))?;
+                            app.refresh_analysis().await;
                         }
                     }
 

@@ -1,5 +1,6 @@
 //! Application state — manages data, views, and user interaction.
 
+use crate::analysis::{self, TermPoint, CloseRace};
 use crate::api::gamma::GammaClient;
 use crate::api::clob::ClobClient;
 use crate::api::types::{Event, Market};
@@ -12,15 +13,17 @@ pub enum View {
     Markets,
     Events,
     Spreads,
+    Analysis,
     Help,
 }
 
 impl View {
-    pub const ALL: [View; 5] = [
+    pub const ALL: [View; 6] = [
         View::Dashboard,
         View::Markets,
         View::Events,
         View::Spreads,
+        View::Analysis,
         View::Help,
     ];
 
@@ -30,6 +33,7 @@ impl View {
             View::Markets => "Markets",
             View::Events => "Events",
             View::Spreads => "Spreads",
+            View::Analysis => "Analysis",
             View::Help => "Help",
         }
     }
@@ -40,7 +44,8 @@ impl View {
             View::Markets => 1,
             View::Events => 2,
             View::Spreads => 3,
-            View::Help => 4,
+            View::Analysis => 4,
+            View::Help => 5,
         }
     }
 }
@@ -63,6 +68,12 @@ pub struct App {
     pub search_query: String,
     pub searching: bool,
     pub filtered_indices: Vec<usize>,
+
+    // Analysis state
+    pub analysis_terms: Vec<TermPoint>,
+    pub analysis_label: String,
+    pub close_races: Vec<CloseRace>,
+    pub analysis_cursor: usize,
 
     // Loading state
     pub loading: bool,
@@ -91,6 +102,10 @@ impl App {
             search_query: String::new(),
             searching: false,
             filtered_indices: Vec::new(),
+            analysis_terms: Vec::new(),
+            analysis_label: String::new(),
+            close_races: Vec::new(),
+            analysis_cursor: 0,
             loading: false,
             loading_spreads: false,
             status_msg: "Press 'r' to refresh data".into(),
@@ -135,6 +150,12 @@ impl App {
                     self.spread_cursor = (self.spread_cursor + 1).min(len - 1);
                 }
             }
+            View::Analysis => {
+                let len = self.close_races.len();
+                if len > 0 {
+                    self.analysis_cursor = (self.analysis_cursor + 1).min(len - 1);
+                }
+            }
             _ => {}
         }
     }
@@ -149,6 +170,9 @@ impl App {
             }
             View::Spreads => {
                 self.spread_cursor = self.spread_cursor.saturating_sub(1);
+            }
+            View::Analysis => {
+                self.analysis_cursor = self.analysis_cursor.saturating_sub(1);
             }
             _ => {}
         }
@@ -171,6 +195,7 @@ impl App {
             View::Markets | View::Dashboard => self.market_cursor = 0,
             View::Events => self.event_cursor = 0,
             View::Spreads => self.spread_cursor = 0,
+            View::Analysis => self.analysis_cursor = 0,
             _ => {}
         }
     }
@@ -264,6 +289,55 @@ impl App {
         );
 
         self.loading = false;
+    }
+
+    /// Run analysis on loaded market data.
+    pub async fn refresh_analysis(&mut self) {
+        if self.markets.is_empty() {
+            self.error_msg = Some("Load markets first (press 'r')".into());
+            return;
+        }
+
+        self.status_msg = "Analyzing markets…".into();
+
+        // Fetch Iran + Ukraine markets from Gamma API for full term structure
+        let gamma = GammaClient::new();
+        let mut all_markets = self.markets.clone();
+
+        // Supplement with search-specific data (Gamma API text search is bad)
+        for term in &["us strikes iran", "khamenei", "israel strikes iran", "iran strike", "ukraine ceasefire", "russia ceasefire", "zelenskyy"] {
+            if let Ok(extra) = gamma.search_markets(term, 100).await {
+                for m in extra {
+                    if !all_markets.iter().any(|e| e.id == m.id) {
+                        all_markets.push(m);
+                    }
+                }
+            }
+        }
+
+        // Build term structure for Iran (biggest geopolitical story)
+        let iran_terms = analysis::build_term_structure(&all_markets, "us strikes iran by");
+        if !iran_terms.is_empty() {
+            self.analysis_terms = iran_terms;
+            self.analysis_label = "US Strikes Iran — Term Structure".into();
+        } else {
+            // Fallback: try Ukraine ceasefire
+            let ukr_terms = analysis::build_term_structure(&all_markets, "ceasefire by");
+            if !ukr_terms.is_empty() {
+                self.analysis_terms = ukr_terms;
+                self.analysis_label = "Russia-Ukraine Ceasefire — Term Structure".into();
+            }
+        }
+
+        // Find close races
+        self.close_races = analysis::find_close_races(&all_markets, 100_000.0);
+        self.analysis_cursor = 0;
+
+        self.status_msg = format!(
+            "Analysis: {} term points, {} close races",
+            self.analysis_terms.len(),
+            self.close_races.len(),
+        );
     }
 
     /// Fetch spread data for top markets.

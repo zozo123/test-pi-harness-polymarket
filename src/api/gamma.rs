@@ -47,17 +47,42 @@ impl GammaClient {
         Ok(markets)
     }
 
-    /// Search markets by query.
+    /// Search markets by fetching pages and filtering client-side.
+    /// Gamma API text search doesn't work, so we paginate through all active markets.
     pub async fn search_markets(&self, query: &str, limit: u32) -> Result<Vec<Market>> {
-        let url = format!(
-            "{}/markets?_q={}&limit={}",
-            GAMMA_BASE,
-            urlencoding(query),
-            limit
-        );
-        let resp = self.client.get(&url).send().await?;
-        let markets: Vec<Market> = resp.json().await?;
-        Ok(markets)
+        let q = query.to_lowercase();
+        let mut results = Vec::new();
+        let mut offset = 0u32;
+        let page_size = 500u32;
+        let max_pages = 4; // up to 2000 markets
+
+        for _ in 0..max_pages {
+            let url = format!(
+                "{}/markets?limit={}&offset={}&active=true&closed=false&order=volumeNum&ascending=false",
+                GAMMA_BASE, page_size, offset
+            );
+            let resp = self.client.get(&url).send().await?;
+            let page: Vec<Market> = resp.json().await?;
+            let page_len = page.len();
+
+            for m in page {
+                if m.question.as_deref()
+                    .map(|s| s.to_lowercase().contains(&q))
+                    .unwrap_or(false)
+                {
+                    results.push(m);
+                    if results.len() >= limit as usize {
+                        return Ok(results);
+                    }
+                }
+            }
+
+            if page_len < page_size as usize {
+                break; // no more pages
+            }
+            offset += page_size;
+        }
+        Ok(results)
     }
 
     /// Get a single market by slug or ID.

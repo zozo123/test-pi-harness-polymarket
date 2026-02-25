@@ -1,3 +1,4 @@
+pub mod analysis_view;
 pub mod dashboard;
 pub mod markets;
 pub mod events;
@@ -15,6 +16,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         View::Markets => markets::draw(frame, app),
         View::Events => events::draw(frame, app),
         View::Spreads => spreads::draw(frame, app),
+        View::Analysis => analysis_view::draw(frame, app),
         View::Help => help::draw(frame, app),
     }
 }
